@@ -1,0 +1,29 @@
+# Flutter
+.dart_tool/
+.packages
+.pub/
+build/
+
+# Android
+android/.gradle/
+android/app/debug
+android/app/profile
+android/app/release
+
+# iOS
+ios/Pods/
+
+# VS Code
+.vscode/
+
+# Environment files
+.env
+.env.*
+
+# Node modules (if backend exists)
+backend/node_modules/
+
+# Firebase / secrets
+google-services.json
+key.properties
+*.jks
