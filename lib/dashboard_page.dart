@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'main.dart';
 import 'login_page.dart';
@@ -9,16 +10,20 @@ import 'assigned_patient.dart';
 import 'patient_info_page.dart';
 import 'alarm_screen.dart';
 import 'dispenser_page.dart';
-import 'config.dart';
+import 'api_connection.dart';
 import 'history_page.dart';
+import 'medicines_list.dart';
+import 'taken.dart';
 
 class DashboardPage extends StatefulWidget {
-  final String username;
+  final String first_name;
+  final String last_name;
   final int userId;
 
   const DashboardPage({
     super.key,
-    required this.username,
+    required this.first_name,
+    required this.last_name,
     required this.userId,
   });
 
@@ -29,6 +34,8 @@ class DashboardPage extends StatefulWidget {
 Set<String> notified = {};
 
 class _DashboardPageState extends State<DashboardPage> {
+  String get full_name => "${widget.first_name} ${widget.last_name}";
+
   List patients = [];
 
   int totalPatients = 0;
@@ -54,10 +61,15 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // ALARM
   void startAlarm(BuildContext context, var p) async {
-    await showNotification(
-  title: "Medication Time",
-  body: "${p['name']} - ${p['medicine']}",
-);
+    final int alarmId = p['id'];
+
+    if (activeAlarmScreenId == alarmId) {
+      return;
+    }
+
+    activeAlarmScreenId = alarmId;
+
+    await cancelNotification(alarmId);
 
     await startAlarmSound();
 
@@ -65,7 +77,7 @@ class _DashboardPageState extends State<DashboardPage> {
       context,
       MaterialPageRoute(
         builder: (_) => AlarmScreen(
-          id: p['id'],
+          id: alarmId,
           title: "Medication Time",
           body: "${p['name']} - ${p['medicine']}",
         ),
@@ -80,25 +92,25 @@ class _DashboardPageState extends State<DashboardPage> {
     for (var p in patients) {
       if (p['time'] == null) continue;
 
-      String key = "${p['id']}";
+      if ((p['status'] ?? '') != "Pending") continue;
 
+      String key = "${p['id']}";
       if (notified.contains(key)) continue;
 
       try {
-        final parts = p['time'].split(' ');
-        final hm = parts[0].split(':');
+        final timeString = p['time'].toString();
+        final hm = timeString.split(':');
 
         int hour = int.parse(hm[0]);
         int minute = int.parse(hm[1]);
 
-        if (parts[1] == "PM" && hour != 12) hour += 12;
-        if (parts[1] == "AM" && hour == 12) hour = 0;
-
         if (now.hour == hour && now.minute == minute) {
-          startAlarm(context, p);
           notified.add(key);
+          startAlarm(context, p);
         }
-      } catch (_) {}
+      } catch (e) {
+        print("TIME PARSE ERROR: $e");
+      }
     }
   }
 
@@ -110,8 +122,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
     timer = Timer.periodic(
       const Duration(seconds: 5),
-      (t) {
-        fetchDashboardData();
+      (t) async {
+        await fetchDashboardData();
         checkSchedule();
       },
     );
@@ -126,52 +138,54 @@ class _DashboardPageState extends State<DashboardPage> {
   // FETCH DASHBOARD
   Future<void> fetchDashboardData() async {
     try {
-      var url = Uri.parse(
-        "${Config.baseUrl}/api/patients?user_id=${widget.userId}",
+      final scheduleUrl = Uri.parse(
+        "${API.baseUrl}/api/patients?user_id=${widget.userId}",
       );
 
-      var response = await http.get(url);
+      final assignedUrl = Uri.parse(
+        "${API.baseUrl}/api/my-assigned-patients?nurse_id=${widget.userId}",
+      );
 
-      var data = jsonDecode(response.body);
+      final takenUrl = Uri.parse(
+        "${API.baseUrl}/api/taken?user_id=${widget.userId}",
+      );
+
+      final scheduleResponse = await http.get(scheduleUrl);
+      final assignedResponse = await http.get(assignedUrl);
+      final takenResponse = await http.get(takenUrl);
+
+      final scheduleData = jsonDecode(scheduleResponse.body);
+      final assignedData = jsonDecode(assignedResponse.body);
+      final takenData = jsonDecode(takenResponse.body);
 
       final now = DateTime.now();
 
-      List todayPatients = data.where((p) {
+      List todayPatients = scheduleData.where((p) {
         DateTime d = DateTime.parse(p['date']).toLocal();
 
         bool sameDate =
-            d.year == now.year &&
-            d.month == now.month &&
-            d.day == now.day;
+            d.year == now.year && d.month == now.month && d.day == now.day;
 
         return sameDate;
       }).toList();
 
-      // SORT RECENT FIRST
       todayPatients.sort((a, b) {
         return b['id'].compareTo(a['id']);
       });
 
-      int taken = todayPatients
-          .where((p) => p['status'] == "Taken")
-          .length;
-
-      int missed = todayPatients
-          .where((p) => p['status'] == "Missed")
-          .length;
+      int missed = todayPatients.where((p) => p['status'] == "Missed").length;
 
       setState(() {
         patients = todayPatients;
 
-        totalPatients = todayPatients.length;
-        totalMedicines = todayPatients.length;
+        totalPatients = assignedData.length;
+        totalMedicines = 0;
 
-        takenToday = taken;
+        takenToday = takenData.length;
         missedToday = missed;
 
         isLoading = false;
       });
-
     } catch (e) {
       print("ERROR: $e");
 
@@ -184,52 +198,71 @@ class _DashboardPageState extends State<DashboardPage> {
   // STAT CARD
   Widget statCard({
     required String title,
-    required String value,
+    String? value,
     required IconData icon,
     required Color color,
+    VoidCallback? onTap,
   }) {
     return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        margin: const EdgeInsets.all(5),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(22),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-
-            CircleAvatar(
-              backgroundColor: color.withOpacity(0.15),
-              child: Icon(icon, color: color),
-            ),
-
-            const SizedBox(height: 15),
-
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: onTap,
+        child: Container(
+          height: 155, // SAME SIZE FOR ALL CARDS
+          padding: const EdgeInsets.all(18),
+          margin: const EdgeInsets.all(5),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                backgroundColor: color.withOpacity(0.15),
+                child: Icon(icon, color: color),
               ),
-            ),
 
-            const SizedBox(height: 5),
+              const SizedBox(height: 18),
 
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.grey,
+              // RESERVE SPACE EVEN IF NO NUMBER
+              SizedBox(
+                height: 32,
+                child: value != null
+                    ? Text(
+                        value,
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      )
+                    : const SizedBox(),
               ),
-            ),
-          ],
+
+              const Spacer(),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(color: Colors.grey, fontSize: 15),
+                    ),
+                  ),
+
+                  if (onTap != null)
+                    Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 16,
+                      color: Colors.grey.shade500,
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -248,10 +281,7 @@ class _DashboardPageState extends State<DashboardPage> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8),
         ],
       ),
       child: ListTile(
@@ -259,12 +289,7 @@ class _DashboardPageState extends State<DashboardPage> {
           backgroundColor: color.withOpacity(0.15),
           child: Icon(icon, color: color),
         ),
-        title: Text(
-          title,
-          style: const TextStyle(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
         trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 18),
         onTap: () async {
           final result = await Navigator.push(
@@ -289,31 +314,22 @@ class _DashboardPageState extends State<DashboardPage> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8),
         ],
       ),
       child: Row(
         children: [
-
           CircleAvatar(
             radius: 28,
             backgroundColor: Colors.blue.shade100,
-            child: const Icon(
-              Icons.medication,
-              color: Colors.blue,
-            ),
+            child: const Icon(Icons.medication, color: Colors.blue),
           ),
-
           const SizedBox(width: 15),
 
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-
                 Text(
                   p['name'] ?? '',
                   style: const TextStyle(
@@ -321,44 +337,33 @@ class _DashboardPageState extends State<DashboardPage> {
                     fontSize: 16,
                   ),
                 ),
-
                 const SizedBox(height: 5),
-
                 Column(
-  crossAxisAlignment: CrossAxisAlignment.start,
-  children: [
-
-    Text(
-      "Medicine: ${p['medicine'] ?? ''}",
-      style: const TextStyle(
-        color: Colors.black87,
-        fontWeight: FontWeight.w600,
-        fontSize: 15,
-      ),
-    ),
-
-    const SizedBox(height: 4),
-  ],
-),
-
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Medicine: ${p['medicine'] ?? ''}",
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                ),
                 const SizedBox(height: 8),
-
                 Row(
                   children: [
-
                     Icon(
                       Icons.access_time,
                       size: 16,
                       color: Colors.grey.shade600,
                     ),
-
                     const SizedBox(width: 5),
-
                     Text(
                       p['time'] ?? '',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w500,
-                      ),
+                      style: const TextStyle(fontWeight: FontWeight.w500),
                     ),
                   ],
                 ),
@@ -367,22 +372,15 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
 
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 8,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: getStatusColor(
-                p['status'] ?? "Pending",
-              ).withOpacity(0.12),
+              color: getStatusColor(p['status'] ?? "Pending").withOpacity(0.12),
               borderRadius: BorderRadius.circular(30),
             ),
             child: Text(
               p['status'] ?? "Pending",
               style: TextStyle(
-                color: getStatusColor(
-                  p['status'] ?? "Pending",
-                ),
+                color: getStatusColor(p['status'] ?? "Pending"),
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -396,28 +394,19 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF4F8FD),
-
       drawer: Drawer(
         child: Column(
           children: [
-
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.only(
-                top: 60,
-                bottom: 30,
-              ),
+              padding: const EdgeInsets.only(top: 60, bottom: 30),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [
-                    Color(0xFF1565C0),
-                    Color(0xFF42A5F5),
-                  ],
+                  colors: [Color(0xFF1565C0), Color(0xFF42A5F5)],
                 ),
               ),
               child: Column(
                 children: [
-
                   CircleAvatar(
                     radius: 40,
                     backgroundColor: Colors.white,
@@ -427,9 +416,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       color: Colors.blue,
                     ),
                   ),
-
                   const SizedBox(height: 15),
-
                   const Text(
                     "MedMax AI",
                     style: TextStyle(
@@ -438,72 +425,58 @@ class _DashboardPageState extends State<DashboardPage> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-
                   const SizedBox(height: 5),
-
                   Text(
-                    widget.username,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                    ),
+                    full_name,
+                    style: const TextStyle(color: Colors.white70),
                   ),
                 ],
               ),
             ),
-
             const SizedBox(height: 15),
-
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Column(
                   children: [
-
                     menuTile(
                       title: "Assigned Patients",
                       icon: Icons.assignment_ind,
                       color: Colors.blue,
                       page: AssignedPatientPage(
                         userId: widget.userId,
+                        nurseName: full_name,
                       ),
                     ),
-
                     menuTile(
                       title: "Patient Information",
                       icon: Icons.folder_shared,
                       color: Colors.green,
                       page: PatientInfoPage(
                         userId: widget.userId,
+                        nurseName: full_name,
                       ),
                     ),
-
                     menuTile(
                       title: "Dispenser Setter",
                       icon: Icons.medication,
                       color: Colors.orange,
                       page: DispenserPage(
                         userId: widget.userId,
+                        nurseName: full_name,
                       ),
                     ),
-
                     menuTile(
                       title: "History",
                       icon: Icons.history,
                       color: Colors.purple,
-                      page: HistoryPage(
-                        userId: widget.userId,
-                      ),
+                      page: HistoryPage(userId: widget.userId),
                     ),
-
                     const Spacer(),
-
                     Container(
                       margin: const EdgeInsets.only(bottom: 20),
                       child: ListTile(
-                        leading: const Icon(
-                          Icons.logout,
-                          color: Colors.red,
-                        ),
+                        leading: const Icon(Icons.logout, color: Colors.red),
                         title: const Text(
                           "Logout",
                           style: TextStyle(
@@ -511,7 +484,10 @@ class _DashboardPageState extends State<DashboardPage> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        onTap: () {
+                        onTap: () async {
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.clear();
+
                           Navigator.pushReplacement(
                             context,
                             MaterialPageRoute(
@@ -535,37 +511,12 @@ class _DashboardPageState extends State<DashboardPage> {
         iconTheme: const IconThemeData(color: Colors.black),
         title: const Text(
           "Dashboard",
-          style: TextStyle(
-            color: Colors.black,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
         ),
       ),
 
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: const Color.fromRGBO(213, 223, 235, 1),
-        icon: const Icon(Icons.add),
-        label: const Text("Add Patient"),
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => DispenserPage(
-                userId: widget.userId,
-              ),
-            ),
-          );
-
-          if (result == true) {
-            fetchDashboardData();
-          }
-        },
-      ),
-
       body: isLoading
-          ? const Center(
-              child: CircularProgressIndicator(),
-            )
+          ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: fetchDashboardData,
               child: SingleChildScrollView(
@@ -574,29 +525,22 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-
                     // WELCOME CARD
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(25),
                       decoration: BoxDecoration(
                         gradient: const LinearGradient(
-                          colors: [
-                            Color(0xFF1565C0),
-                            Color(0xFF42A5F5),
-                          ],
+                          colors: [Color(0xFF1565C0), Color(0xFF42A5F5)],
                         ),
                         borderRadius: BorderRadius.circular(30),
                       ),
                       child: Row(
                         children: [
-
                           Expanded(
                             child: Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-
                                 const Text(
                                   "Welcome",
                                   style: TextStyle(
@@ -608,7 +552,7 @@ class _DashboardPageState extends State<DashboardPage> {
                                 const SizedBox(height: 8),
 
                                 Text(
-                                  widget.username,
+                                  full_name,
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 28,
@@ -620,9 +564,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
                                 const Text(
                                   "Monitor medications and schedules easily.",
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                  ),
+                                  style: TextStyle(color: Colors.white70),
                                 ),
                               ],
                             ),
@@ -646,35 +588,66 @@ class _DashboardPageState extends State<DashboardPage> {
                     // STATS
                     Row(
                       children: [
-
                         statCard(
                           title: "Patients",
                           value: "$totalPatients",
                           icon: Icons.people,
                           color: Colors.blue,
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => AssignedPatientPage(
+                                  userId: widget.userId,
+                                  nurseName: full_name,
+                                ),
+                              ),
+                            );
+                          },
                         ),
 
                         statCard(
                           title: "Medicines",
-                          value: "$totalMedicines",
+                          value: null,
                           icon: Icons.medication,
                           color: Colors.orange,
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => MedicinesListPage(
+                                  userId: widget.userId,
+                                  nurseName: full_name,
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),
 
                     Row(
                       children: [
-
                         statCard(
                           title: "Taken",
                           value: "$takenToday",
                           icon: Icons.check_circle,
                           color: Colors.green,
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => TakenPage(
+                                  userId: widget.userId,
+                                  nurseName: full_name,
+                                ),
+                              ),
+                            );
+                          },
                         ),
 
                         statCard(
-                          title: "Missed",
+                          title: "Missed Alarms",
                           value: "$missedToday",
                           icon: Icons.cancel,
                           color: Colors.red,
@@ -686,10 +659,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
                     // TITLE
                     Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-
                         const Text(
                           "Today's Schedule",
                           style: TextStyle(
@@ -714,12 +685,10 @@ class _DashboardPageState extends State<DashboardPage> {
                             padding: const EdgeInsets.all(40),
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius:
-                                  BorderRadius.circular(25),
+                              borderRadius: BorderRadius.circular(25),
                             ),
                             child: Column(
                               children: [
-
                                 Icon(
                                   Icons.event_busy,
                                   size: 70,
@@ -740,17 +709,13 @@ class _DashboardPageState extends State<DashboardPage> {
                               ],
                             ),
                           )
-
                         // LIST
                         : ListView.builder(
                             shrinkWrap: true,
-                            physics:
-                                const NeverScrollableScrollPhysics(),
+                            physics: const NeverScrollableScrollPhysics(),
                             itemCount: patients.length,
                             itemBuilder: (context, index) {
-                              return scheduleCard(
-                                patients[index],
-                              );
+                              return scheduleCard(patients[index]);
                             },
                           ),
                   ],

@@ -3,10 +3,11 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 import 'main.dart';
-import 'config.dart';
+import 'api_connection.dart';
+import 'face_verify.dart';
 
 class AlarmScreen extends StatefulWidget {
-  final int id; 
+  final int id;
   final String title;
   final String body;
 
@@ -25,11 +26,10 @@ class _AlarmScreenState extends State<AlarmScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
 
-  //  UPDATE STATUS
   Future<void> updateStatus(String status) async {
     try {
       await http.put(
-        Uri.parse("${Config.baseUrl}/api/patients/status/${widget.id}"),
+        Uri.parse("${API.baseUrl}/api/patients/status/${widget.id}"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({"status": status}),
       );
@@ -38,13 +38,18 @@ class _AlarmScreenState extends State<AlarmScreen>
     }
   }
 
-  //  DISPENSE TRIGGER
-  Future<void> dispenseMedicine() async {
-    try {
-      var url = Uri.parse("${Config.baseUrl}/api/dispense");
-      await http.post(url);
-    } catch (e) {
-      print("DISPENSE ERROR: $e");
+  Future<void> closeAlarm(String status) async {
+    await updateStatus(status);
+
+    await cancelNotification(widget.id);
+    await cancelNotification(999);
+
+    await stopAlarmSound();
+
+    activeAlarmScreenId = null;
+
+    if (mounted) {
+      Navigator.pop(context);
     }
   }
 
@@ -52,122 +57,188 @@ class _AlarmScreenState extends State<AlarmScreen>
   void initState() {
     super.initState();
 
-    //  SOFT PULSE ANIMATION
+    startAlarmSound();
+
     _controller = AnimationController(
       vsync: this,
-      duration: Duration(seconds: 2),
-      lowerBound: 0.95,
-      upperBound: 1.05,
+      duration: const Duration(seconds: 2),
+      lowerBound: 0.85,
+      upperBound: 1.15,
     )..repeat(reverse: true);
-
-    startAlarmSound(); //  start sound
   }
 
   @override
   void dispose() {
     _controller.dispose();
     stopAlarmSound();
+
+    if (activeAlarmScreenId == widget.id) {
+      activeAlarmScreenId = null;
+    }
+
     super.dispose();
+  }
+
+  String currentTime() {
+    final now = TimeOfDay.now();
+    final hour = now.hour.toString().padLeft(2, '0');
+    final minute = now.minute.toString().padLeft(2, '0');
+    return "$hour:$minute";
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.blue.shade50,
-
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: ScaleTransition(
-            scale: _controller,
-            child: Container(
-              padding: EdgeInsets.all(25),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(25),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.blue.withOpacity(0.2),
-                    blurRadius: 20,
-                  )
-                ],
-              ),
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        body: Container(
+          width: double.infinity,
+          height: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFF0D47A1), // dark blue
+                Color(0xFF1565C0), // main blue
+                Color(0xFF42A5F5), // light blue
+              ],
+            ),
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
                 children: [
+                  const SizedBox(height: 40),
 
-                  // ICON
-                  CircleAvatar(
-                    radius: 40,
-                    backgroundColor: Colors.blue.shade100,
-                    child: Icon(Icons.medication,
-                        size: 40, color: Colors.blue),
-                  ),
-
-                  SizedBox(height: 20),
-
-                  // TITLE
                   Text(
-                    widget.title,
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
+                    currentTime(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 52,
+                      fontWeight: FontWeight.w300,
+                      letterSpacing: 3,
                     ),
                   ),
 
-                  SizedBox(height: 10),
+                  const SizedBox(height: 10),
 
-                  // BODY
+                  Text(
+                    widget.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
                   Text(
                     widget.body,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.black54,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
 
-                  SizedBox(height: 25),
+                  const Spacer(),
 
-                  //  TAKE MEDICINE
+                  ScaleTransition(
+                    scale: _controller,
+                    child: Container(
+                      width: 135,
+                      height: 135,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.15),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.5),
+                          width: 2,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.alarm,
+                        color: Colors.white,
+                        size: 60,
+                      ),
+                    ),
+                  ),
+
+                  const Spacer(),
+
                   SizedBox(
                     width: double.infinity,
-                    height: 55,
-                    child: ElevatedButton(
+                    height: 58,
+                    child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF1565C0),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15),
+                          borderRadius: BorderRadius.circular(18),
                         ),
                       ),
                       onPressed: () async {
-                        await updateStatus("Taken"); 
-                        await stopAlarmSound();
-                        await dispenseMedicine();
-                        Navigator.pop(context);
+                        final result = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const FaceVerifyPage(
+                              returnResult: true,
+                            ),
+                          ),
+                        );
+
+                        if (result != null && result['authorized'] == true) {
+                          await closeAlarm("Taken");
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text("Face verification failed. Medicine not taken."),
+                            ),
+                          );
+                        }
                       },
-                      child: Text(
-                        "TAKE MEDICINE",
-                        style: TextStyle(fontSize: 16),
+                      icon: const Icon(Icons.medication),
+                      label: const Text(
+                        "Take Medicine",
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
 
-                  SizedBox(height: 10),
+                  const SizedBox(height: 15),
 
-                  // MISS / REMIND LATER
-                  TextButton(
-                    onPressed: () async {
-                      await updateStatus("Missed"); 
-                      await stopAlarmSound();
-                      Navigator.pop(context);
-                    },
-                    child: Text(
-                      "Remind me later",
-                      style: TextStyle(color: Colors.grey),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 55,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.white),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
+                      onPressed: () async {
+                        await closeAlarm("Missed");
+                      },
+                      icon: const Icon(Icons.snooze),
+                      label: const Text(
+                        "Remind Me Later",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ),
+
+                  const SizedBox(height: 30),
                 ],
               ),
             ),

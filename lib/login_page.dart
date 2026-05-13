@@ -4,7 +4,9 @@ import 'dart:convert';
 
 import 'dashboard_page.dart';
 import 'signup_page.dart';
-import 'config.dart';
+import 'api_connection.dart';
+import 'forgot_pass_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -14,14 +16,15 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+
   final TextEditingController username = TextEditingController();
   final TextEditingController password = TextEditingController();
 
   bool isLoading = false;
   bool obscurePassword = true;
 
+  // login func
   Future<void> login() async {
-    // VALIDATION
     if (username.text.isEmpty || password.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -34,7 +37,7 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => isLoading = true);
 
     try {
-      var url = Uri.parse("${Config.baseUrl}/api/login");
+      var url = Uri.parse(API.login);
 
       var response = await http.post(
         url,
@@ -48,11 +51,19 @@ class _LoginPageState extends State<LoginPage> {
       var data = jsonDecode(response.body);
 
       if (data['success']) {
+        final prefs = await SharedPreferences.getInstance();
+
+        await prefs.setBool('is_logged_in', true);
+        await prefs.setInt('user_id', data['user']['id']);
+        await prefs.setString('first_name', data['user']['first_name']);
+        await prefs.setString('last_name', data['user']['last_name']);
+        
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
             builder: (_) => DashboardPage(
-              username: data['user']['username'],
+              first_name: data['user']['first_name'],
+              last_name: data['user']['last_name'],
               userId: data['user']['id'],
             ),
           ),
@@ -243,11 +254,10 @@ class _LoginPageState extends State<LoginPage> {
                         alignment: Alignment.centerRight,
                         child: TextButton(
                           onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  "Forgot password ",
-                                ),
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const ForgotPassPage(),
                               ),
                             );
                           },

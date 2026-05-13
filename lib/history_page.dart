@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'config.dart';
+import 'api_connection.dart';
 
 class HistoryPage extends StatefulWidget {
   final int userId;
@@ -27,7 +27,7 @@ class _HistoryPageState extends State<HistoryPage> {
   Future<void> fetchHistory() async {
     try {
       var url = Uri.parse(
-          "${Config.baseUrl}/api/patients?user_id=${widget.userId}");
+          "${API.baseUrl}/api/patients?user_id=${widget.userId}");
 
       var res = await http.get(url);
       var data = jsonDecode(res.body);
@@ -94,7 +94,7 @@ class _HistoryPageState extends State<HistoryPage> {
                 Padding(
                   padding: const EdgeInsets.all(10),
                   child: DropdownButtonFormField<String>(
-                    value: selectedStatus,
+                    initialValue: selectedStatus,
                     items: ["All", "Taken", "Missed"]
                         .map((e) => DropdownMenuItem(
                               value: e,

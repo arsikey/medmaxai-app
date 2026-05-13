@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
-import 'config.dart';
+import 'api_connection.dart';
 
 class PatientInfoPage extends StatefulWidget {
   final int userId;
+  final String nurseName;
 
   const PatientInfoPage({
     super.key,
     required this.userId,
+    required this.nurseName,
   });
 
   @override
@@ -34,27 +36,80 @@ class _PatientInfoPageState
     fetchPatients();
   }
 
+  Future<void> assignPatient(int patientId) async {
+    try {
+      final response = await http.put(
+        Uri.parse("${API.baseUrl}/api/patient-info/assign/$patientId"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "nurse_id": widget.userId,
+          "nurse": widget.nurseName,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(data['message'] ?? "Assign request completed")),
+      );
+
+      if (data['success'] == true) {
+        fetchPatients();
+      }
+    } catch (e) {
+      print("ASSIGN ERROR: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Server error")),
+      );
+    }
+  }
+
+  Future<void> unassignPatient(int patientId) async {
+    try {
+      final response = await http.put(
+        Uri.parse("${API.baseUrl}/api/patient-info/unassign/$patientId"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "nurse_id": widget.userId,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(data['message'] ?? "Unassign request completed")),
+      );
+
+      if (data['success'] == true) {
+        fetchPatients();
+      }
+    } catch (e) {
+      print("UNASSIGN ERROR: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Server error")),
+      );
+    }
+  }
   // ==========================
   // FETCH PATIENTS
   // ==========================
   Future<void> fetchPatients() async {
 
     try {
-
       var url = Uri.parse(
-        "${Config.baseUrl}/api/patient-info?user_id=${widget.userId}",
+        "${API.baseUrl}/api/patient-info",
       );
 
       var response = await http.get(url);
-
       var data = jsonDecode(response.body);
 
-      // SORT RECENT FIRST
-      data.sort((a, b) =>
-          int.parse(b['id'].toString())
-              .compareTo(
-            int.parse(a['id'].toString()),
-          ));
+      // SORT ALPHABETICALLY BY NAME
+      data.sort((a, b) {
+        final nameA = (a['name'] ?? '').toString().toLowerCase();
+        final nameB = (b['name'] ?? '').toString().toLowerCase();
+
+        return nameA.compareTo(nameB);
+      });
 
       setState(() {
         patients = data;
@@ -105,185 +160,204 @@ class _PatientInfoPageState
     });
   }
 
-  // ==========================
-  // DELETE
-  // ==========================
-  Future<void> deletePatient(int id) async {
-
+  Future<List> fetchPatientMedicines(int patientId) async {
     try {
-
-      await http.delete(
-        Uri.parse(
-          "${Config.baseUrl}/api/patient-info/$id",
-        ),
+      final response = await http.get(
+        Uri.parse("${API.baseUrl}/api/patient-medicines/$patientId"),
       );
 
-      fetchPatients();
-
+      return jsonDecode(response.body);
     } catch (e) {
-      print("DELETE ERROR: $e");
+      print("FETCH MEDICINES ERROR: $e");
+      return [];
     }
-  }
-
-  // ==========================
-  // DELETE DIALOG
-  // ==========================
-  void showDeleteDialog(int id) {
-
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-
-        title: const Text(
-          "Delete Patient",
-        ),
-
-        content: const Text(
-          "Are you sure you want to delete this patient?",
-        ),
-
-        actions: [
-
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-            },
-            child: const Text("Cancel"),
-          ),
-
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-
-            onPressed: () async {
-
-              Navigator.pop(context);
-
-              await deletePatient(id);
-            },
-
-            child: const Text("Delete"),
-          ),
-        ],
-      ),
-    );
   }
 
   // ==========================
   // SHOW DETAILS
   // ==========================
   void showDetails(var p) {
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-
       builder: (_) {
+        return FutureBuilder<List>(
+          future: fetchPatientMedicines(p['id']),
+          builder: (context, snapshot) {
+            final medicines = snapshot.data ?? [];
 
-        return Container(
-          padding: const EdgeInsets.all(25),
-
-          decoration: const BoxDecoration(
-            color: Colors.white,
-
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(30),
-              topRight: Radius.circular(30),
-            ),
-          ),
-
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
-
-              children: [
-
-                Center(
-                  child: Container(
-                    width: 60,
-                    height: 5,
-
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius:
-                      BorderRadius.circular(20),
+            return Container(
+              padding: const EdgeInsets.all(25),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(30),
+                  topRight: Radius.circular(30),
+                ),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 60,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
 
-                const SizedBox(height: 25),
+                    const SizedBox(height: 25),
 
-                Center(
-                  child: CircleAvatar(
-                    radius: 45,
-                    backgroundColor:
-                    Colors.blue.shade100,
-
-                    child: const Icon(
-                      Icons.person,
-                      size: 45,
-                      color: Colors.blue,
+                    Center(
+                      child: CircleAvatar(
+                        radius: 45,
+                        backgroundColor: Colors.blue.shade100,
+                        child: const Icon(
+                          Icons.person,
+                          size: 45,
+                          color: Colors.blue,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
 
-                const SizedBox(height: 20),
+                    const SizedBox(height: 20),
 
-                Center(
-                  child: Text(
-                    p['name'] ?? '',
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
+                    Center(
+                      child: Text(
+                        p['name'] ?? '',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
-                  ),
+
+                    const SizedBox(height: 30),
+
+                    detailTile(
+                      icon: Icons.home,
+                      title: "Address",
+                      value: p['address'] ?? '',
+                    ),
+
+                    detailTile(
+                      icon: Icons.person_outline,
+                      title: "Sex",
+                      value: p['sex'] ?? '',
+                    ),
+
+                    detailTile(
+                      icon: Icons.cake,
+                      title: "Birthday",
+                      value: p['birthday'] ?? '',
+                    ),
+
+                    detailTile(
+                      icon: Icons.medical_services,
+                      title: "Condition",
+                      value: p['condition_text'] ?? '',
+                    ),
+
+                    detailTile(
+                      icon: Icons.local_hospital,
+                      title: "Doctor",
+                      value: p['doctor'] ?? '',
+                    ),
+
+                    detailTile(
+                      icon: Icons.health_and_safety,
+                      title: "Nurse",
+                      value: p['nurse'] ?? 'Not Assigned',
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    const Text(
+                      "Maintenance Medicines",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    snapshot.connectionState == ConnectionState.waiting
+                        ? const Center(
+                            child: CircularProgressIndicator(),
+                          )
+                        : medicines.isEmpty
+                            ? Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(18),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF4F8FD),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Text(
+                                  "No medicine listed",
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              )
+                            : Column(
+                                children: List.generate(
+                                  medicines.length,
+                                  (index) {
+                                    final med = medicines[index];
+
+                                    return Container(
+                                      margin: const EdgeInsets.only(bottom: 10),
+                                      padding: const EdgeInsets.all(16),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF4F8FD),
+                                        borderRadius: BorderRadius.circular(18),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          CircleAvatar(
+                                            backgroundColor:
+                                                Colors.blue.withOpacity(0.15),
+                                            child: Text(
+                                              "${index + 1}",
+                                              style: const TextStyle(
+                                                color: Colors.blue,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+
+                                          const SizedBox(width: 15),
+
+                                          Expanded(
+                                            child: Text(
+                                              med['medicine_name'] ?? '',
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+
+                    const SizedBox(height: 20),
+                  ],
                 ),
-
-                const SizedBox(height: 30),
-
-                detailTile(
-                  icon: Icons.home,
-                  title: "Address",
-                  value: p['address'] ?? '',
-                ),
-
-                detailTile(
-                  icon: Icons.person_outline,
-                  title: "Gender",
-                  value: p['gender'] ?? '',
-                ),
-
-                detailTile(
-                  icon: Icons.cake,
-                  title: "Birthday",
-                  value: p['birthday'] ?? '',
-                ),
-
-                detailTile(
-                  icon: Icons.medical_services,
-                  title: "Condition",
-                  value: p['condition_text'] ?? '',
-                ),
-
-                detailTile(
-                  icon: Icons.local_hospital,
-                  title: "Doctor",
-                  value: p['doctor'] ?? '',
-                ),
-
-                detailTile(
-                  icon: Icons.health_and_safety,
-                  title: "Nurse",
-                  value: p['nurse'] ?? '',
-                ),
-
-                const SizedBox(height: 20),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
@@ -299,10 +373,9 @@ class _PatientInfoPageState
   }) {
 
     return Container(
+
       margin: const EdgeInsets.only(bottom: 15),
-
       padding: const EdgeInsets.all(18),
-
       decoration: BoxDecoration(
         color: const Color(0xFFF4F8FD),
         borderRadius: BorderRadius.circular(20),
@@ -310,26 +383,21 @@ class _PatientInfoPageState
 
       child: Row(
         children: [
-
           CircleAvatar(
             backgroundColor:
             Colors.blue.withOpacity(0.15),
-
             child: Icon(
               icon,
               color: Colors.blue,
             ),
           ),
-
           const SizedBox(width: 15),
 
           Expanded(
             child: Column(
               crossAxisAlignment:
               CrossAxisAlignment.start,
-
               children: [
-
                 Text(
                   title,
                   style: TextStyle(
@@ -337,7 +405,6 @@ class _PatientInfoPageState
                     fontSize: 12,
                   ),
                 ),
-
                 const SizedBox(height: 4),
 
                 Text(
@@ -359,16 +426,24 @@ class _PatientInfoPageState
   // PATIENT CARD
   // ==========================
   Widget patientCard(var p) {
+    final int nurseId =
+        int.tryParse((p['nurse_id'] ?? 0).toString()) ?? 0;
+
+    final String assignedNurse =
+        (p['nurse'] == null || p['nurse'].toString().isEmpty)
+            ? "Not Assigned"
+            : p['nurse'].toString();
+
+    final bool isUnassigned = nurseId == 0;
+    final bool assignedToMe = nurseId == widget.userId;
+    final bool assignedToOther = !isUnassigned && !assignedToMe;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 18),
-
       padding: const EdgeInsets.all(20),
-
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(25),
-
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),
@@ -376,18 +451,13 @@ class _PatientInfoPageState
           ),
         ],
       ),
-
       child: Column(
         children: [
-
           Row(
             children: [
-
               CircleAvatar(
                 radius: 30,
-                backgroundColor:
-                Colors.blue.shade100,
-
+                backgroundColor: Colors.blue.shade100,
                 child: const Icon(
                   Icons.person,
                   color: Colors.blue,
@@ -399,17 +469,13 @@ class _PatientInfoPageState
 
               Expanded(
                 child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-
                     Text(
                       p['name'] ?? '',
                       style: const TextStyle(
                         fontSize: 20,
-                        fontWeight:
-                        FontWeight.bold,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
 
@@ -428,25 +494,12 @@ class _PatientInfoPageState
 
               PopupMenuButton(
                 itemBuilder: (context) => [
-
                   PopupMenuItem(
                     child: const Text("View"),
                     onTap: () {
                       Future.delayed(
                         Duration.zero,
-                            () => showDetails(p),
-                      );
-                    },
-                  ),
-
-                  PopupMenuItem(
-                    child: const Text("Delete"),
-                    onTap: () {
-                      Future.delayed(
-                        Duration.zero,
-                            () => showDeleteDialog(
-                          p['id'],
-                        ),
+                        () => showDetails(p),
                       );
                     },
                   ),
@@ -459,7 +512,6 @@ class _PatientInfoPageState
 
           Row(
             children: [
-
               Expanded(
                 child: infoCard(
                   icon: Icons.local_hospital,
@@ -474,10 +526,49 @@ class _PatientInfoPageState
                 child: infoCard(
                   icon: Icons.health_and_safety,
                   title: "Nurse",
-                  value: p['nurse'] ?? '',
+                  value: assignedNurse,
                 ),
               ),
             ],
+          ),
+
+          const SizedBox(height: 18),
+
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: assignedToMe
+                    ? Colors.red.shade400
+                    : assignedToOther
+                        ? Colors.grey
+                        : const Color(0xFF1565C0),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              onPressed: assignedToOther
+                  ? null
+                  : () {
+                      if (assignedToMe) {
+                        unassignPatient(p['id']);
+                      } else {
+                        assignPatient(p['id']);
+                      }
+                    },
+              child: Text(
+                assignedToMe
+                    ? "UNASSIGN"
+                    : assignedToOther
+                        ? "ASSIGNED"
+                        : "ASSIGN",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -495,23 +586,18 @@ class _PatientInfoPageState
 
     return Container(
       padding: const EdgeInsets.all(15),
-
       decoration: BoxDecoration(
         color: const Color(0xFFF4F8FD),
         borderRadius: BorderRadius.circular(18),
       ),
-
       child: Column(
         crossAxisAlignment:
         CrossAxisAlignment.start,
-
         children: [
-
           Icon(
             icon,
             color: Colors.blue,
           ),
-
           const SizedBox(height: 10),
 
           Text(
@@ -521,7 +607,6 @@ class _PatientInfoPageState
               fontSize: 12,
             ),
           ),
-
           const SizedBox(height: 5),
 
           Text(
@@ -539,16 +624,12 @@ class _PatientInfoPageState
   Widget build(BuildContext context) {
 
     return Scaffold(
-
       backgroundColor:
       const Color(0xFFF4F8FD),
-
       appBar: AppBar(
         backgroundColor:
         Colors.transparent,
-
         elevation: 0,
-
         iconTheme:
         const IconThemeData(
           color: Colors.black,
@@ -564,59 +645,22 @@ class _PatientInfoPageState
         ),
       ),
 
-      floatingActionButton:
-      FloatingActionButton.extended(
-
-        backgroundColor:
-        const Color.fromARGB(255, 178, 206, 238),
-
-        icon:
-        const Icon(Icons.person_add),
-
-        label:
-        const Text("Add Patient"),
-
-        onPressed: () async {
-
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) =>
-                  AddPatientInfoPage(
-                    userId:
-                    widget.userId,
-                  ),
-            ),
-          );
-
-          fetchPatients();
-        },
-      ),
-
       body: isLoading
-
           ? const Center(
         child:
         CircularProgressIndicator(),
       )
-
           : RefreshIndicator(
-
         onRefresh: fetchPatients,
-
         child:
         SingleChildScrollView(
-
           physics:
           const AlwaysScrollableScrollPhysics(),
-
           padding:
           const EdgeInsets.all(20),
-
           child: Column(
             crossAxisAlignment:
             CrossAxisAlignment.start,
-
             children: [
 
               // HEADER
@@ -628,10 +672,8 @@ class _PatientInfoPageState
                 const EdgeInsets.all(
                   25,
                 ),
-
                 decoration:
                 BoxDecoration(
-
                   gradient:
                   const LinearGradient(
                     colors: [
@@ -643,24 +685,19 @@ class _PatientInfoPageState
                       ),
                     ],
                   ),
-
                   borderRadius:
                   BorderRadius.circular(
                     30,
                   ),
                 ),
-
                 child: Row(
                   children: [
-
                     Expanded(
                       child: Column(
                         crossAxisAlignment:
                         CrossAxisAlignment
                             .start,
-
                         children: [
-
                           const Text(
                             "Patient Records",
                             style:
@@ -671,10 +708,7 @@ class _PatientInfoPageState
                               15,
                             ),
                           ),
-
-                          const SizedBox(
-                            height: 8,
-                          ),
+                          const SizedBox(height: 8,),
 
                           Text(
                             "${patients.length} Patients",
@@ -689,10 +723,7 @@ class _PatientInfoPageState
                                   .bold,
                             ),
                           ),
-
-                          const SizedBox(
-                            height: 10,
-                          ),
+                          const SizedBox(height: 10,),
                         ],
                       ),
                     ),
@@ -700,12 +731,10 @@ class _PatientInfoPageState
                     Container(
                       width: 70,
                       height: 70,
-
                       decoration:
                       BoxDecoration(
                         color:
                         Colors.white24,
-
                         borderRadius:
                         BorderRadius.circular(
                           20,
@@ -722,17 +751,14 @@ class _PatientInfoPageState
                   ],
                 ),
               ),
-
               const SizedBox(height: 25),
 
               // SEARCH
               Container(
-
                 decoration:
                 BoxDecoration(
                   color:
                   Colors.white,
-
                   borderRadius:
                   BorderRadius.circular(
                     18,
@@ -745,7 +771,6 @@ class _PatientInfoPageState
                           .withOpacity(
                         0.05,
                       ),
-
                       blurRadius:
                       10,
                     ),
@@ -755,15 +780,12 @@ class _PatientInfoPageState
                 child: TextField(
                   controller:
                   searchController,
-
                   onChanged:
                   searchPatient,
-
                   decoration:
                   InputDecoration(
                     hintText:
                     "Search patient...",
-
                     prefixIcon:
                     const Icon(
                       Icons.search,
@@ -787,7 +809,6 @@ class _PatientInfoPageState
                   ),
                 ),
               ),
-
               const SizedBox(height: 25),
 
               // TITLE
@@ -799,16 +820,13 @@ class _PatientInfoPageState
                   FontWeight.bold,
                 ),
               ),
-
               const SizedBox(height: 18),
 
               // EMPTY
               patients.isEmpty
-
                   ? Container(
                 width:
                 double.infinity,
-
                 padding:
                 const EdgeInsets.all(
                   40,
@@ -818,7 +836,6 @@ class _PatientInfoPageState
                 BoxDecoration(
                   color:
                   Colors.white,
-
                   borderRadius:
                   BorderRadius.circular(
                     25,
@@ -827,7 +844,6 @@ class _PatientInfoPageState
 
                 child: Column(
                   children: [
-
                     Icon(
                       Icons.people_alt,
                       size: 70,
@@ -835,10 +851,7 @@ class _PatientInfoPageState
                           .grey
                           .shade400,
                     ),
-
-                    const SizedBox(
-                      height: 15,
-                    ),
+                    const SizedBox(height: 15,),
 
                     const Text(
                       "No Patient Records",
@@ -881,309 +894,6 @@ class _PatientInfoPageState
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// =====================================
-// ADD PATIENT PAGE
-// =====================================
-
-class AddPatientInfoPage extends StatefulWidget {
-
-  final int userId;
-
-  const AddPatientInfoPage({
-    super.key,
-    required this.userId,
-  });
-
-  @override
-  State<AddPatientInfoPage> createState() =>
-      _AddPatientInfoPageState();
-}
-
-class _AddPatientInfoPageState
-    extends State<AddPatientInfoPage> {
-
-  final name =
-  TextEditingController();
-
-  final address =
-  TextEditingController();
-
-  final gender =
-  TextEditingController();
-
-  final birthday =
-  TextEditingController();
-
-  final condition =
-  TextEditingController();
-
-  final doctor =
-  TextEditingController();
-
-  final nurse =
-  TextEditingController();
-
-  bool isLoading = false;
-
-  Future<void> savePatient() async {
-
-    if (name.text.isEmpty ||
-        address.text.isEmpty ||
-        gender.text.isEmpty ||
-        birthday.text.isEmpty ||
-        condition.text.isEmpty ||
-        doctor.text.isEmpty ||
-        nurse.text.isEmpty) {
-
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
-        const SnackBar(
-          content:
-          Text("Please fill all fields"),
-        ),
-      );
-
-      return;
-    }
-
-    setState(() {
-      isLoading = true;
-    });
-
-    try {
-
-      var url = Uri.parse(
-        "${Config.baseUrl}/api/patient-info",
-      );
-
-      var response = await http.post(
-        url,
-
-        headers: {
-          "Content-Type":
-          "application/json",
-        },
-
-        body: jsonEncode({
-          "name": name.text,
-          "address": address.text,
-          "gender": gender.text,
-          "birthday": birthday.text,
-          "condition_text":
-          condition.text,
-          "doctor": doctor.text,
-          "nurse": nurse.text,
-          "user_id":
-          widget.userId,
-        }),
-      );
-
-      var data =
-      jsonDecode(response.body);
-
-      if (data['success']) {
-
-        Navigator.pop(
-          context,
-          true,
-        );
-      }
-
-    } catch (e) {
-
-      print("SAVE ERROR: $e");
-    }
-
-    setState(() {
-      isLoading = false;
-    });
-  }
-
-  Widget customField({
-    required TextEditingController controller,
-    required String hint,
-    required IconData icon,
-  }) {
-
-    return Container(
-      margin:
-      const EdgeInsets.only(bottom: 18),
-
-      decoration: BoxDecoration(
-        color: Colors.white,
-
-        borderRadius:
-        BorderRadius.circular(18),
-
-        boxShadow: [
-          BoxShadow(
-            color:
-            Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-          ),
-        ],
-      ),
-
-      child: TextField(
-        controller: controller,
-
-        decoration: InputDecoration(
-          hintText: hint,
-
-          prefixIcon: Icon(
-            icon,
-            color: Colors.blue,
-          ),
-
-          border: OutlineInputBorder(
-            borderRadius:
-            BorderRadius.circular(18),
-            borderSide: BorderSide.none,
-          ),
-
-          filled: true,
-          fillColor: Colors.transparent,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-
-    return Scaffold(
-
-      backgroundColor:
-      const Color(0xFFF4F8FD),
-
-      appBar: AppBar(
-        backgroundColor:
-        Colors.transparent,
-
-        elevation: 0,
-
-        iconTheme:
-        const IconThemeData(
-          color: Colors.black,
-        ),
-
-        title: const Text(
-          "Add Patient",
-          style: TextStyle(
-            color: Colors.black,
-            fontWeight:
-            FontWeight.bold,
-          ),
-        ),
-      ),
-
-      body: SingleChildScrollView(
-
-        padding:
-        const EdgeInsets.all(20),
-
-        child: Column(
-          children: [
-
-            customField(
-              controller: name,
-              hint: "Full Name",
-              icon: Icons.person,
-            ),
-
-            customField(
-              controller: address,
-              hint: "Address",
-              icon: Icons.home,
-            ),
-
-            customField(
-              controller: gender,
-              hint: "Gender",
-              icon: Icons.people,
-            ),
-
-            customField(
-              controller: birthday,
-              hint: "Birthday",
-              icon: Icons.cake,
-            ),
-
-            customField(
-              controller: condition,
-              hint: "Condition",
-              icon:
-              Icons.medical_services,
-            ),
-
-            customField(
-              controller: doctor,
-              hint: "Doctor",
-              icon:
-              Icons.local_hospital,
-            ),
-
-            customField(
-              controller: nurse,
-              hint: "Nurse",
-              icon:
-              Icons.health_and_safety,
-            ),
-
-            const SizedBox(height: 25),
-
-            SizedBox(
-              width: double.infinity,
-              height: 58,
-
-              child: ElevatedButton(
-
-                style:
-                ElevatedButton.styleFrom(
-                  backgroundColor:
-                  const Color.fromARGB(255, 180, 207, 237),
-
-                  shape:
-                  RoundedRectangleBorder(
-                    borderRadius:
-                    BorderRadius.circular(
-                      18,
-                    ),
-                  ),
-                ),
-
-                onPressed:
-                isLoading
-                    ? null
-                    : savePatient,
-
-                child: isLoading
-
-                    ? const CircularProgressIndicator(
-                  color:
-                  Colors.white,
-                )
-
-                    : const Text(
-                  "SAVE PATIENT",
-                  style:
-                  TextStyle(
-                    fontSize:
-                    16,
-                    fontWeight:
-                    FontWeight
-                        .bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );

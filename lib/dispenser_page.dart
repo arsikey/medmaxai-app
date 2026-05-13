@@ -1,350 +1,321 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'config.dart';
-import 'main.dart';
-
-//  GLOBAL SELECTED VALUES
-int selectedHour = 1;
-int selectedMinute = 0;
-String selectedPeriod = "AM";
-
-int selectedYear = DateTime.now().year;
-int selectedMonth = DateTime.now().month;
-int selectedDay = DateTime.now().day;
+import 'api_connection.dart';
 
 class DispenserPage extends StatefulWidget {
   final int userId;
+  final String nurseName;
 
-  const DispenserPage({super.key, required this.userId});
+  const DispenserPage({
+    super.key,
+    required this.userId,
+    required this.nurseName,
+  });
 
   @override
-  _DispenserPageState createState() => _DispenserPageState();
+  State<DispenserPage> createState() => _DispenserPageState();
 }
 
 class _DispenserPageState extends State<DispenserPage> {
   final TextEditingController dispenser = TextEditingController();
   final TextEditingController cylinder = TextEditingController();
   final TextEditingController medicine = TextEditingController();
-  final TextEditingController patient = TextEditingController();
-  final TextEditingController nurse = TextEditingController();
-  final TextEditingController minuteController = TextEditingController();
+  final TextEditingController noOfMedicine = TextEditingController();
 
-  //  SAVE FUNCTION (FIXED + CLEAN)
+  bool isSaving = false;
+
   Future<void> saveDispenser(BuildContext context) async {
-    if (patient.text.isEmpty || medicine.text.isEmpty) {
+    if (dispenser.text.isEmpty ||
+        cylinder.text.isEmpty ||
+        medicine.text.isEmpty ||
+        noOfMedicine.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill all required fields")),
+        const SnackBar(content: Text("Please fill all fields")),
       );
       return;
     }
 
+    setState(() {
+      isSaving = true;
+    });
+
     try {
-      // FORMAT TIME
-      String timeValue =
-          "$selectedHour:${selectedMinute.toString().padLeft(2, '0')} $selectedPeriod";
-
-      //  LOCAL DATE (NO TIMEZONE ISSUE)
-      String dateValue =
-          "${selectedYear.toString().padLeft(4, '0')}-${selectedMonth.toString().padLeft(2, '0')}-${selectedDay.toString().padLeft(2, '0')}";
-
-      //  SAVE TO PATIENTS (FOR DASHBOARD + ASSIGNED)
-      await http.post(
-        Uri.parse("${Config.baseUrl}/api/patients"),
+      final response = await http.post(
+        Uri.parse("${API.baseUrl}/api/dispensers"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-          "name": patient.text,
-          "medicine": medicine.text,
-          "time": timeValue,
-          "date": dateValue,
+          "dispenser": dispenser.text.trim(),
+          "cylinder": cylinder.text.trim(),
+          "medicine": medicine.text.trim(),
+          "no_of_medicine": noOfMedicine.text.trim(),
           "user_id": widget.userId,
+          "nurse_name": widget.nurseName,
         }),
       );
 
-      // SAVE TO DISPENSERS 
-      await http.post(
-        Uri.parse("${Config.baseUrl}/api/dispensers"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "dispenser": dispenser.text,
-          "cylinder": cylinder.text,
-          "medicine": medicine.text,
-          "time": timeValue,
-          "date": dateValue,
-          "patient": patient.text,
-          "nurse": nurse.text,
-          "user_id": widget.userId,
-        }),
-      );
+      final data = jsonDecode(response.body);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Saved Successfully")),
-      );
+      if (response.statusCode == 200 && data['success'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Dispenser saved successfully")),
+        );
 
-      // ==========================
-// CONVERT TO 24 HOUR
-// ==========================
-int hour = selectedHour;
-
-if (selectedPeriod == "PM" &&
-    hour != 12) {
-  hour += 12;
-}
-
-if (selectedPeriod == "AM" &&
-    hour == 12) {
-  hour = 0;
-}
-
-// ==========================
-// CREATE DATE TIME
-// ==========================
-DateTime alarmDateTime =
-    DateTime(
-  selectedYear,
-  selectedMonth,
-  selectedDay,
-  hour,
-  selectedMinute,
-);
-
-// ==========================
-// SCHEDULE NOTIFICATION
-// ==========================
-await scheduleNotification(
-
-  id: DateTime.now()
-      .millisecondsSinceEpoch ~/ 1000,
-
-  title: "Medication Reminder",
-
-  body:
-      "${patient.text} needs ${medicine.text}",
-
-  scheduledDate:
-      alarmDateTime,
-);
-
-      Navigator.pop(context, true); //  refresh dashboard
-
+        Navigator.pop(context, true);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(data['message'] ?? "Failed to save dispenser"),
+          ),
+        );
+      }
     } catch (e) {
       print("SAVE ERROR: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Server error")),
       );
     }
+
+    setState(() {
+      isSaving = false;
+    });
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Dispenser Setter"),
-      ),
+  void dispose() {
+    dispenser.dispose();
+    cylinder.dispose();
+    medicine.dispose();
+    noOfMedicine.dispose();
+    super.dispose();
+  }
 
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-
-              Icon(Icons.medication, size: 80, color: Colors.blue),
-              const SizedBox(height: 20),
-
-              input("What Dispenser?", dispenser),
-              input("What Cylinder?", cylinder),
-              input("What Medicine?", medicine),
-
-              //  TIME
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: selectedHour,
-                      decoration: const InputDecoration(labelText: "Hour"),
-                      items: List.generate(12, (i) {
-                        int hour = i + 1;
-                        return DropdownMenuItem(
-                          value: hour,
-                          child: Text("$hour"),
-                        );
-                      }),
-                      onChanged: (val) =>
-                          setState(() => selectedHour = val!),
-                    ),
-                  ),
-
-                  const SizedBox(width: 10),
-
-                  Expanded(
-                    child: TextField(
-                      controller: minuteController,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: "Minute",
-                        border: const UnderlineInputBorder(),
-                        suffixIcon: PopupMenuButton<int>(
-                          icon: const Icon(Icons.arrow_drop_down),
-                          onSelected: (value) {
-                            setState(() {
-                              selectedMinute = value;
-                              minuteController.text =
-                                  value.toString().padLeft(2, '0');
-                            });
-                          },
-                          itemBuilder: (context) {
-                            return List.generate(60, (i) {
-                              return PopupMenuItem(
-                                value: i,
-                                child: Text(
-                                    i.toString().padLeft(2, '0')),
-                              );
-                            });
-                          },
-                        ),
-                      ),
-                      onChanged: (value) {
-                        int? val = int.tryParse(value);
-                        if (val != null && val >= 0 && val <= 59) {
-                          selectedMinute = val;
-                        }
-                      },
-                    ),
-                  ),
-
-                  const SizedBox(width: 10),
-
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: selectedPeriod,
-                      decoration:
-                          const InputDecoration(labelText: "AM/PM"),
-                      items: ["AM", "PM"]
-                          .map((p) => DropdownMenuItem(
-                                value: p,
-                                child: Text(p),
-                              ))
-                          .toList(),
-                      onChanged: (val) =>
-                          setState(() => selectedPeriod = val!),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 15),
-
-              //  DATE
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: selectedYear,
-                      decoration: const InputDecoration(labelText: "Year"),
-                      items: List.generate(5, (i) {
-                        int year = DateTime.now().year + i;
-                        return DropdownMenuItem(
-                          value: year,
-                          child: Text("$year"),
-                        );
-                      }),
-                      onChanged: (val) =>
-                          setState(() => selectedYear = val!),
-                    ),
-                  ),
-
-                  const SizedBox(width: 10),
-
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: selectedMonth,
-                      decoration: const InputDecoration(labelText: "Month"),
-                      items: List.generate(12, (i) {
-                        int month = i + 1;
-                        return DropdownMenuItem(
-                          value: month,
-                          child: Text(
-                              month.toString().padLeft(2, '0')),
-                        );
-                      }),
-                      onChanged: (val) =>
-                          setState(() => selectedMonth = val!),
-                    ),
-                  ),
-
-                  const SizedBox(width: 10),
-
-                  Expanded(
-                    child: DropdownButtonFormField<int>(
-                      initialValue: selectedDay,
-                      decoration: const InputDecoration(labelText: "Day"),
-                      items: List.generate(31, (i) {
-                        int day = i + 1;
-                        return DropdownMenuItem(
-                          value: day,
-                          child: Text(
-                              day.toString().padLeft(2, '0')),
-                        );
-                      }),
-                      onChanged: (val) =>
-                          setState(() => selectedDay = val!),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 15),
-
-              input("Who's Patient?", patient),
-              input("Who's Nurse?", nurse),
-
-              const SizedBox(height: 20),
-
-              //  SAVE BUTTON
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: () => saveDispenser(context),
-                  child: const Text("Save",
-                      style: TextStyle(fontSize: 18)),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              //  OPTIONAL FEATURE
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.camera_alt),
-                  label: const Text("Scan Face"),
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text("Face Scan Coming Soon")),
-                    );
-                  },
-                ),
-              ),
-            ],
+  Widget input({
+    required String label,
+    required TextEditingController controller,
+    required TextInputType keyboardType,
+    required IconData icon,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
           ),
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        decoration: InputDecoration(
+          labelText: label,
+          prefixIcon: Icon(
+            icon,
+            color: const Color(0xFF1565C0),
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(18),
+            borderSide: BorderSide.none,
+          ),
+          filled: true,
+          fillColor: Colors.transparent,
         ),
       ),
     );
   }
 
-  //  INPUT UI
-  Widget input(String label, TextEditingController controller) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: TextField(
+  Widget smallInput({
+    required String label,
+    required TextEditingController controller,
+    required IconData icon,
+  }) {
+    return Expanded(
+      child: input(
+        label: label,
         controller: controller,
-        decoration: InputDecoration(
-          labelText: label,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+        keyboardType: TextInputType.number,
+        icon: icon,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F8FD),
+
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black),
+        title: const Text(
+          "Dispenser Setter",
+          style: TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+
+              // HEADER CARD
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(25),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFF1565C0),
+                      Color(0xFF42A5F5),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 70,
+                      height: 70,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      child: const Icon(
+                        Icons.medication,
+                        color: Colors.white,
+                        size: 42,
+                      ),
+                    ),
+
+                    const SizedBox(width: 18),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            "Medicine Setup",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+
+                          const SizedBox(height: 6),
+
+                          Text(
+                            "Set by: ${widget.nurseName}",
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 25),
+
+              // FORM CARD
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(25),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+
+                    const Text(
+                      "Dispenser Details",
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    Row(
+                      children: [
+                        smallInput(
+                          label: "Dispenser No.",
+                          controller: dispenser,
+                          icon: Icons.local_hospital,
+                        ),
+
+                        const SizedBox(width: 12),
+
+                        smallInput(
+                          label: "Cylinder No.",
+                          controller: cylinder,
+                          icon: Icons.circle,
+                        ),
+                      ],
+                    ),
+
+                    input(
+                      label: "Medicine",
+                      controller: medicine,
+                      keyboardType: TextInputType.text,
+                      icon: Icons.medication_liquid,
+                    ),
+
+                    input(
+                      label: "No. of Medicine",
+                      controller: noOfMedicine,
+                      keyboardType: TextInputType.number,
+                      icon: Icons.inventory_2,
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 55,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1565C0),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          elevation: 3,
+                        ),
+                        onPressed: isSaving ? null : () => saveDispenser(context),
+                        child: isSaving
+                            ? const CircularProgressIndicator(
+                                color: Colors.white,
+                              )
+                            : const Text(
+                                "SAVE DISPENSER",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
